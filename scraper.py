@@ -334,6 +334,7 @@ def download_youtube_audio(
     format_choice: str = 'mp3',
     quality: str = '192',
     add_metadata: bool = True,
+    redownload: bool = False,
     progress: Optional[Progress] = None,
     task_id: Optional[int] = None
 ) -> Tuple[bool, str]:
@@ -349,6 +350,7 @@ def download_youtube_audio(
         format_choice: Output format (mp3, m4a, mp4)
         quality: Audio quality (128, 192, 320, best)
         add_metadata: Whether to embed ID3 tags
+        redownload: Re-download even if file already exists (default: False)
         progress: Optional rich Progress instance
         task_id: Optional task ID for progress tracking
         
@@ -372,6 +374,12 @@ def download_youtube_audio(
         # Determine extension
         ext_map = {'mp3': '.mp3', 'm4a': '.m4a', 'mp4': '.mp4'}
         extension = ext_map.get(format_choice, '.mp3')
+        
+        # Skip if file already exists and redownload is not requested
+        if not redownload and (download_dir / (base_filename + extension)).exists():
+            if progress and task_id is not None:
+                progress.update(task_id, advance=1)
+            return True, f"Skipped (already exists): {base_filename}"
         
         # Get unique filename
         output_path = get_unique_filename(download_dir, base_filename, extension)
@@ -519,8 +527,8 @@ Popular channels: 1live, antenne-bayern, bayern-3, bigfm, ndr-2, swr3, wdr2
                         help='Download directory (default: downloads/)')
     parser.add_argument('--from-csv', type=str, metavar='FILE',
                         help='Download from existing CSV file instead of scraping')
-    parser.add_argument('--skip-existing', action='store_true',
-                        help="Don't re-download existing files")
+    parser.add_argument('--redownload', action='store_true',
+                        help="Re-download files that already exist (default: skip existing)")
     parser.add_argument('--no-metadata', action='store_true',
                         help='Skip ID3 metadata embedding (faster)')
     
@@ -581,6 +589,7 @@ def get_interactive_config() -> dict:
     quality = '192'
     download_dir = 'downloads'
     no_metadata = False
+    redownload = False
     
     if download:
         console.print("\n[cyan]Download format:[/cyan]")
@@ -588,7 +597,7 @@ def get_interactive_config() -> dict:
         console.print("2. M4A (audio only, better quality)")
         console.print("3. MP4 (video)")
         format_num = IntPrompt.ask("[cyan]Choose format[/cyan]", choices=["1", "2", "3"], default="1")
-        format_choice = ['mp3', 'm4a', 'mp4'][format_num - 1]
+        format_choice = ['mp3', 'm4a', 'mp4'][int(format_num) - 1]
         
         if format_choice in ['mp3', 'm4a']:
             console.print("\n[cyan]Audio quality:[/cyan]")
@@ -597,18 +606,19 @@ def get_interactive_config() -> dict:
             console.print("3. 320 kbps (best quality)")
             console.print("4. Best available")
             quality_num = IntPrompt.ask("[cyan]Choose quality[/cyan]", choices=["1", "2", "3", "4"], default="2")
-            quality = ['128', '192', '320', 'best'][quality_num - 1]
+            quality = ['128', '192', '320', 'best'][int(quality_num) - 1]
         
         download_dir = Prompt.ask("[cyan]Download directory[/cyan]", default="downloads")
         no_metadata = not Confirm.ask("[cyan]Add ID3 metadata tags?[/cyan]", default=True)
+        redownload = Confirm.ask("[cyan]Re-download already existing files?[/cyan]", default=False)
     
     return {
         'channel': channel,
         'pages': pages,
         'max_songs': max_songs,
         'output': output,
-        'unique_only': mode_choice == "2",
-        'save_both': mode_choice == "3",
+        'unique_only': mode_choice == 2,
+        'save_both': mode_choice == 3,
         'quiet': False,
         'no_color': False,
         'start_id': '',
@@ -617,6 +627,7 @@ def get_interactive_config() -> dict:
         'quality': quality,
         'download_dir': download_dir,
         'no_metadata': no_metadata,
+        'redownload': redownload,
     }
 
 
@@ -697,6 +708,7 @@ def main():
         args.quality = config.get('quality', '192')
         args.download_dir = config.get('download_dir', 'downloads')
         args.no_metadata = config.get('no_metadata', False)
+        args.redownload = config.get('redownload', False)
     
     # Handle batch download from CSV
     if args.from_csv:
@@ -709,19 +721,15 @@ def main():
         
         console.print(f"[green]✓ Loaded {len(all_data)} songs from CSV[/green]")
         
-        # Filter unique if requested
-        if args.unique_only:
-            unique_data = filter_unique_songs(all_data)
-            console.print(f"[cyan]Filtered to {len(unique_data)} unique songs[/cyan]")
-            songs_to_download = unique_data
-        else:
-            songs_to_download = all_data
+        # Filter unique — always download unique songs only
+        unique_data = filter_unique_songs(all_data)
+        songs_to_download = unique_data
         
         # Download if requested
         if args.download:
             download_dir = Path(args.download_dir)
             
-            console.print(f"\n[cyan]Downloading {len(songs_to_download)} songs to {download_dir}/[/cyan]")
+            console.print(f"\n[bold]Fetched[/bold] [green]{len(all_data)}[/green] songs — [bold]{len(unique_data)}[/bold] unique to download → [cyan]{download_dir}/[/cyan]")
             
             successful = 0
             failed = 0
@@ -748,6 +756,7 @@ def main():
                         format_choice=args.format,
                         quality=args.quality,
                         add_metadata=not args.no_metadata,
+                        redownload=args.redownload,
                         progress=progress,
                         task_id=task
                     )
@@ -891,14 +900,10 @@ def main():
     
     # Download songs if requested (live mode)
     if args.download and not args.from_csv:
-        # Determine which songs to download
-        if args.unique_only or args.save_both:
-            songs_to_download = unique_data
-        else:
-            songs_to_download = all_data
+        songs_to_download = unique_data
         
         download_dir = Path(args.download_dir)
-        console.print(f"\n[cyan]Downloading {len(songs_to_download)} songs to {download_dir}/[/cyan]")
+        console.print(f"\n[bold]Fetched[/bold] [green]{len(all_data)}[/green] songs — [bold]{len(unique_data)}[/bold] unique to download → [cyan]{download_dir}/[/cyan]")
         
         successful = 0
         failed = 0
@@ -914,7 +919,8 @@ def main():
                     download_dir=download_dir,
                     format_choice=args.format,
                     quality=args.quality,
-                    add_metadata=not args.no_metadata
+                    add_metadata=not args.no_metadata,
+                    redownload=args.redownload
                 )
                 
                 if success:
@@ -945,6 +951,7 @@ def main():
                         format_choice=args.format,
                         quality=args.quality,
                         add_metadata=not args.no_metadata,
+                        redownload=args.redownload,
                         progress=progress,
                         task_id=task
                     )

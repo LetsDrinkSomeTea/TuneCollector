@@ -14,7 +14,8 @@
 - Download songs as MP3, M4A, or MP4
 - Configurable audio quality (128/192/320 kbps or best)
 - Automatic ID3 metadata tagging (artist, title, album)
-- Smart filename handling with duplicate detection
+- Smart filename handling — skips already downloaded songs by default
+- Always downloads unique songs only (no duplicate downloads)
 - Two modes: Live (during scraping) or Batch (from CSV)
 - Progress bars and error handling
 
@@ -215,7 +216,7 @@ python3 scraper.py -p 20 --save-both -q
 --quality QUALITY       Audio quality: 128, 192, 320, best (default: 192)
 --download-dir DIR      Download directory (default: downloads/)
 --from-csv FILE         Download from existing CSV file instead of scraping
---skip-existing         Don't re-download existing files
+--redownload            Re-download files that already exist (default: skip existing)
 --no-metadata           Skip ID3 metadata embedding (faster)
 ```
 
@@ -332,7 +333,8 @@ Initializing session and getting cookies...
 - **Quality vs Size**: 192 kbps is a good balance, 320 kbps for best quality
 - **Batch mode**: Scrape first, then download - allows you to review the list
 - **Format choice**: MP3 is most compatible, M4A has better quality at same bitrate
-- **Metadata**: ID3 tags make songs easier to organize in music players
+- **Skip by default**: Already downloaded songs are skipped automatically — use `--redownload` to force re-downloading
+- **No duplicate downloads**: Only unique songs (by YouTube ID) are ever downloaded, regardless of save mode
 - **Network**: Downloads can be large (3-5 MB per song) - use Wi-Fi!
 
 ## Troubleshooting
