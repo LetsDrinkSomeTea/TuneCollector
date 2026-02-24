@@ -1,7 +1,37 @@
 #!/usr/bin/env python3
 """
-MyOnlineRadio Playlist Scraper
+MyOnlineRadio Playlist Scraper & Downloader
 Scrapes playlist data from myonlineradio.de with support for 100+ German radio channels
+Optionally downloads songs from YouTube as MP3/MP4
+
+Copyright (C) 2024  Contributors
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+DISCLAIMER:
+This tool is for educational and personal use only. Users are responsible for:
+- Complying with YouTube's Terms of Service
+- Respecting copyright laws and intellectual property rights
+- Following myonlineradio.de's terms and conditions
+- Using the tool responsibly and ethically
+
+Downloaded content may be copyrighted. Ensure you have the right to download
+and use the content. The authors assume no liability for misuse.
+
+This project was developed with assistance from AI (GitHub Copilot CLI).
+---
 """
 
 import argparse
@@ -10,11 +40,18 @@ from bs4 import BeautifulSoup
 import csv
 import sys
 import time
-from typing import List, Dict, Optional
+import re
+import os
+from typing import List, Dict, Optional, Tuple
 from pathlib import Path
 
+import yt_dlp
+from mutagen.easyid3 import EasyID3
+from mutagen.id3 import ID3, TIT2, TPE1, TALB
+from mutagen.mp3 import MP3
+
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, DownloadColumn, TimeRemainingColumn
 from rich.table import Table
 from rich.prompt import Prompt, IntPrompt, Confirm
 from rich.panel import Panel
@@ -233,6 +270,200 @@ def validate_channel(channel: str) -> bool:
     return channel.lower() in ALL_CHANNELS
 
 
+def sanitize_filename(filename: str) -> str:
+    """
+    Sanitize filename by removing invalid characters.
+    
+    Args:
+        filename: Original filename
+        
+    Returns:
+        Sanitized filename safe for filesystem
+    """
+    # Remove invalid characters: / \ : * ? " < > |
+    invalid_chars = r'[<>:"/\\|?*]'
+    sanitized = re.sub(invalid_chars, '', filename)
+    
+    # Replace multiple spaces with single space
+    sanitized = re.sub(r'\s+', ' ', sanitized)
+    
+    # Trim whitespace and dots from ends
+    sanitized = sanitized.strip(' .')
+    
+    # Limit length to 200 chars (leave room for extension and numbering)
+    if len(sanitized) > 200:
+        sanitized = sanitized[:200].strip()
+    
+    return sanitized if sanitized else 'untitled'
+
+
+def get_unique_filename(directory: Path, base_name: str, extension: str) -> Path:
+    """
+    Get a unique filename by appending numbers if file exists.
+    
+    Args:
+        directory: Target directory
+        base_name: Base filename without extension
+        extension: File extension (e.g., '.mp3')
+        
+    Returns:
+        Unique file path
+    """
+    filename = directory / f"{base_name}{extension}"
+    
+    if not filename.exists():
+        return filename
+    
+    # File exists, append number
+    counter = 1
+    while True:
+        filename = directory / f"{base_name} ({counter}){extension}"
+        if not filename.exists():
+            return filename
+        counter += 1
+        if counter > 1000:  # Safety limit
+            raise Exception("Too many duplicate filenames")
+
+
+def download_youtube_audio(
+    youtube_id: str,
+    artist: str,
+    song: str,
+    channel: str,
+    download_dir: Path,
+    format_choice: str = 'mp3',
+    quality: str = '192',
+    add_metadata: bool = True,
+    progress: Optional[Progress] = None,
+    task_id: Optional[int] = None
+) -> Tuple[bool, str]:
+    """
+    Download audio from YouTube and optionally add metadata.
+    
+    Args:
+        youtube_id: YouTube video ID
+        artist: Artist name
+        song: Song title
+        channel: Radio channel name
+        download_dir: Download directory
+        format_choice: Output format (mp3, m4a, mp4)
+        quality: Audio quality (128, 192, 320, best)
+        add_metadata: Whether to embed ID3 tags
+        progress: Optional rich Progress instance
+        task_id: Optional task ID for progress tracking
+        
+    Returns:
+        Tuple of (success: bool, message: str)
+    """
+    try:
+        # Create download directory if it doesn't exist
+        download_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Sanitize filename
+        if artist and song:
+            base_filename = sanitize_filename(f"{artist} - {song}")
+        elif song:
+            base_filename = sanitize_filename(song)
+        elif artist:
+            base_filename = sanitize_filename(artist)
+        else:
+            base_filename = sanitize_filename(youtube_id)
+        
+        # Determine extension
+        ext_map = {'mp3': '.mp3', 'm4a': '.m4a', 'mp4': '.mp4'}
+        extension = ext_map.get(format_choice, '.mp3')
+        
+        # Get unique filename
+        output_path = get_unique_filename(download_dir, base_filename, extension)
+        
+        # Configure yt-dlp options
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'outtmpl': str(output_path.with_suffix('')),  # yt-dlp adds extension
+            'quiet': True,
+            'no_warnings': True,
+            'socket_timeout': 30,
+        }
+        
+        # Add format-specific options
+        if format_choice in ['mp3', 'm4a']:
+            ydl_opts['postprocessors'] = [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': format_choice,
+                'preferredquality': quality if quality != 'best' else '0',
+            }]
+        
+        # Download
+        url = f"https://www.youtube.com/watch?v={youtube_id}"
+        
+        if progress and task_id is not None:
+            progress.update(task_id, description=f"[cyan]Downloading: {base_filename[:40]}...")
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+        
+        # Add metadata if requested and format is MP3
+        if add_metadata and format_choice == 'mp3' and output_path.exists():
+            try:
+                audio = MP3(str(output_path), ID3=ID3)
+                
+                # Add ID3 tag if it doesn't exist
+                try:
+                    audio.add_tags()
+                except:
+                    pass
+                
+                # Set tags
+                if artist:
+                    audio['TPE1'] = TPE1(encoding=3, text=artist)
+                if song:
+                    audio['TIT2'] = TIT2(encoding=3, text=song)
+                if channel:
+                    audio['TALB'] = TALB(encoding=3, text=channel.upper())
+                
+                audio.save()
+            except Exception as e:
+                # Metadata failed but download succeeded
+                console.print(f"[yellow]⚠ Metadata error for {base_filename[:30]}: {str(e)[:50]}[/yellow]")
+        
+        if progress and task_id is not None:
+            progress.update(task_id, advance=1)
+        
+        return True, f"✓ {base_filename[:50]}"
+        
+    except yt_dlp.utils.DownloadError as e:
+        error_msg = str(e)
+        if 'unavailable' in error_msg.lower():
+            return False, f"✗ Unavailable: {base_filename[:40]}"
+        elif 'private' in error_msg.lower():
+            return False, f"✗ Private: {base_filename[:40]}"
+        else:
+            return False, f"✗ Error: {base_filename[:40]}"
+    
+    except Exception as e:
+        return False, f"✗ Failed: {base_filename[:40]} ({str(e)[:30]})"
+
+
+def load_songs_from_csv(csv_path: str) -> List[Dict[str, str]]:
+    """
+    Load song data from CSV file.
+    
+    Args:
+        csv_path: Path to CSV file
+        
+    Returns:
+        List of song dictionaries
+    """
+    try:
+        with open(csv_path, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            songs = list(reader)
+            return songs
+    except Exception as e:
+        console.print(f"[red]Error loading CSV: {e}[/red]")
+        return []
+
+
 def parse_arguments() -> argparse.Namespace:
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
@@ -276,6 +507,22 @@ Popular channels: 1live, antenne-bayern, bayern-3, bigfm, ndr-2, swr3, wdr2
                         help='Disable colored output')
     parser.add_argument('-i', '--interactive', action='store_true',
                         help='Interactive mode with guided prompts')
+    
+    # YouTube download options
+    parser.add_argument('--download', action='store_true',
+                        help='Enable YouTube downloads')
+    parser.add_argument('--format', type=str, choices=['mp3', 'm4a', 'mp4'], default='mp3',
+                        help='Download format (default: mp3)')
+    parser.add_argument('--quality', type=str, choices=['128', '192', '320', 'best'], default='192',
+                        help='Audio quality in kbps (default: 192)')
+    parser.add_argument('--download-dir', type=str, default='downloads',
+                        help='Download directory (default: downloads/)')
+    parser.add_argument('--from-csv', type=str, metavar='FILE',
+                        help='Download from existing CSV file instead of scraping')
+    parser.add_argument('--skip-existing', action='store_true',
+                        help="Don't re-download existing files")
+    parser.add_argument('--no-metadata', action='store_true',
+                        help='Skip ID3 metadata embedding (faster)')
     
     return parser.parse_args()
 
@@ -328,6 +575,33 @@ def get_interactive_config() -> dict:
     
     mode_choice = IntPrompt.ask("[cyan]Choose mode[/cyan]", choices=["1", "2", "3"], default="1")
     
+    # Download options
+    download = Confirm.ask("\n[cyan]Download songs from YouTube?[/cyan]", default=False)
+    format_choice = 'mp3'
+    quality = '192'
+    download_dir = 'downloads'
+    no_metadata = False
+    
+    if download:
+        console.print("\n[cyan]Download format:[/cyan]")
+        console.print("1. MP3 (audio only)")
+        console.print("2. M4A (audio only, better quality)")
+        console.print("3. MP4 (video)")
+        format_num = IntPrompt.ask("[cyan]Choose format[/cyan]", choices=["1", "2", "3"], default="1")
+        format_choice = ['mp3', 'm4a', 'mp4'][format_num - 1]
+        
+        if format_choice in ['mp3', 'm4a']:
+            console.print("\n[cyan]Audio quality:[/cyan]")
+            console.print("1. 128 kbps (smaller files)")
+            console.print("2. 192 kbps (balanced)")
+            console.print("3. 320 kbps (best quality)")
+            console.print("4. Best available")
+            quality_num = IntPrompt.ask("[cyan]Choose quality[/cyan]", choices=["1", "2", "3", "4"], default="2")
+            quality = ['128', '192', '320', 'best'][quality_num - 1]
+        
+        download_dir = Prompt.ask("[cyan]Download directory[/cyan]", default="downloads")
+        no_metadata = not Confirm.ask("[cyan]Add ID3 metadata tags?[/cyan]", default=True)
+    
     return {
         'channel': channel,
         'pages': pages,
@@ -337,7 +611,12 @@ def get_interactive_config() -> dict:
         'save_both': mode_choice == "3",
         'quiet': False,
         'no_color': False,
-        'start_id': ''
+        'start_id': '',
+        'download': download,
+        'format': format_choice,
+        'quality': quality,
+        'download_dir': download_dir,
+        'no_metadata': no_metadata,
     }
 
 
@@ -413,6 +692,77 @@ def main():
         args.save_both = config['save_both']
         args.quiet = config['quiet']
         args.start_id = config['start_id']
+        args.download = config.get('download', False)
+        args.format = config.get('format', 'mp3')
+        args.quality = config.get('quality', '192')
+        args.download_dir = config.get('download_dir', 'downloads')
+        args.no_metadata = config.get('no_metadata', False)
+    
+    # Handle batch download from CSV
+    if args.from_csv:
+        console.print(f"[cyan]Loading songs from {args.from_csv}...[/cyan]")
+        all_data = load_songs_from_csv(args.from_csv)
+        
+        if not all_data:
+            console.print("[red]No songs loaded from CSV![/red]")
+            sys.exit(1)
+        
+        console.print(f"[green]✓ Loaded {len(all_data)} songs from CSV[/green]")
+        
+        # Filter unique if requested
+        if args.unique_only:
+            unique_data = filter_unique_songs(all_data)
+            console.print(f"[cyan]Filtered to {len(unique_data)} unique songs[/cyan]")
+            songs_to_download = unique_data
+        else:
+            songs_to_download = all_data
+        
+        # Download if requested
+        if args.download:
+            download_dir = Path(args.download_dir)
+            
+            console.print(f"\n[cyan]Downloading {len(songs_to_download)} songs to {download_dir}/[/cyan]")
+            
+            successful = 0
+            failed = 0
+            
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                console=console
+            ) as progress:
+                task = progress.add_task(
+                    f"[cyan]Downloading...", 
+                    total=len(songs_to_download)
+                )
+                
+                for song in songs_to_download:
+                    success, msg = download_youtube_audio(
+                        youtube_id=song.get('youtube_id', ''),
+                        artist=song.get('artist', ''),
+                        song=song.get('song', ''),
+                        channel=song.get('channel', channel),
+                        download_dir=download_dir,
+                        format_choice=args.format,
+                        quality=args.quality,
+                        add_metadata=not args.no_metadata,
+                        progress=progress,
+                        task_id=task
+                    )
+                    
+                    if success:
+                        successful += 1
+                    else:
+                        failed += 1
+                        if not args.quiet:
+                            console.print(f"[yellow]{msg}[/yellow]")
+            
+            # Show download summary
+            console.print(f"\n[green]✓ Download complete: {successful} successful, {failed} failed[/green]")
+        
+        sys.exit(0)
     
     # Set default output filename if not specified
     if not args.output:
@@ -538,6 +888,74 @@ def main():
         if save_to_csv(all_data, args.output):
             saved_files.append((args.output, len(all_data)))
             console.print(f"[green]✓ Saved all songs to {args.output}[/green]")
+    
+    # Download songs if requested (live mode)
+    if args.download and not args.from_csv:
+        # Determine which songs to download
+        if args.unique_only or args.save_both:
+            songs_to_download = unique_data
+        else:
+            songs_to_download = all_data
+        
+        download_dir = Path(args.download_dir)
+        console.print(f"\n[cyan]Downloading {len(songs_to_download)} songs to {download_dir}/[/cyan]")
+        
+        successful = 0
+        failed = 0
+        
+        if args.quiet:
+            # Quiet mode - no progress bar
+            for song in songs_to_download:
+                success, msg = download_youtube_audio(
+                    youtube_id=song.get('youtube_id', ''),
+                    artist=song.get('artist', ''),
+                    song=song.get('song', ''),
+                    channel=channel,
+                    download_dir=download_dir,
+                    format_choice=args.format,
+                    quality=args.quality,
+                    add_metadata=not args.no_metadata
+                )
+                
+                if success:
+                    successful += 1
+                else:
+                    failed += 1
+        else:
+            # Progress bar mode
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                console=console
+            ) as progress:
+                task = progress.add_task(
+                    f"[cyan]Downloading {args.format.upper()}...", 
+                    total=len(songs_to_download)
+                )
+                
+                for song in songs_to_download:
+                    success, msg = download_youtube_audio(
+                        youtube_id=song.get('youtube_id', ''),
+                        artist=song.get('artist', ''),
+                        song=song.get('song', ''),
+                        channel=channel,
+                        download_dir=download_dir,
+                        format_choice=args.format,
+                        quality=args.quality,
+                        add_metadata=not args.no_metadata,
+                        progress=progress,
+                        task_id=task
+                    )
+                    
+                    if success:
+                        successful += 1
+                    else:
+                        failed += 1
+                        console.print(f"[yellow]{msg}[/yellow]")
+        
+        console.print(f"\n[green]✓ Download complete: {successful} successful, {failed} failed[/green]")
     
     # Display summary
     if not args.quiet:

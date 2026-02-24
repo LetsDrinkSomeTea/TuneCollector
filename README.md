@@ -1,6 +1,6 @@
-# MyOnlineRadio Playlist Scraper
+# MyOnlineRadio Playlist Scraper & Downloader
 
-A feature-rich command-line tool to scrape playlist data from **100+ German radio channels** on myonlineradio.de. Download artist names, song titles, YouTube IDs, and timestamps with a beautiful rich CLI interface featuring progress bars, colored output, and flexible configuration options.
+A feature-rich command-line tool to scrape playlist data from **100+ German radio channels** on myonlineradio.de and **download songs directly from YouTube** as MP3/MP4. Features a beautiful rich CLI interface with progress bars, colored output, ID3 metadata tagging, and flexible configuration options.
 
 ## Features
 
@@ -10,8 +10,16 @@ A feature-rich command-line tool to scrape playlist data from **100+ German radi
 - Easy channel selection with `--channel/-c` flag
 - List all available channels with `--list-channels`
 
+🎧 **YouTube Download**  
+- Download songs as MP3, M4A, or MP4
+- Configurable audio quality (128/192/320 kbps or best)
+- Automatic ID3 metadata tagging (artist, title, album)
+- Smart filename handling with duplicate detection
+- Two modes: Live (during scraping) or Batch (from CSV)
+- Progress bars and error handling
+
 ✨ **Rich CLI Interface**
-- Beautiful progress bars during scraping
+- Beautiful progress bars during scraping and downloading
 - Colored status messages (success, warning, error)
 - Summary tables showing statistics per channel
 - Sample track display
@@ -94,6 +102,44 @@ python3 scraper.py -c wdr2 -p 10 -q
 python3 scraper.py -p 5
 ```
 
+#### YouTube Download Examples
+
+**Download during scraping (Live Mode):**
+```bash
+# Scrape and download as MP3 (192 kbps)
+python3 scraper.py -c 1live -p 5 --download
+
+# Download with specific quality
+python3 scraper.py -c bayern-3 -p 3 --download --quality 320
+
+# Download as M4A (better quality)
+python3 scraper.py -c bigfm -n 50 --download --format m4a --quality best
+
+# Download unique songs only
+python3 scraper.py -c swr4 -p 10 --unique-only --download
+
+# Download to custom directory
+python3 scraper.py -c ndr-2 -p 5 --download --download-dir ./my_music
+
+# Download without metadata (faster)
+python3 scraper.py -c antenne-bayern -p 3 --download --no-metadata
+```
+
+**Download from existing CSV (Batch Mode):**
+```bash
+# Download songs from a previously scraped playlist
+python3 scraper.py --from-csv 1live_playlist.csv --download
+
+# Download unique songs only from CSV
+python3 scraper.py --from-csv bayern-3_playlist.csv --unique-only --download
+
+# High quality downloads from CSV
+python3 scraper.py --from-csv swr4_playlist.csv --download --quality 320
+
+# Download as MP4 video
+python3 scraper.py --from-csv bigfm_playlist.csv --download --format mp4
+```
+
 #### Basic Examples
 
 ```bash
@@ -146,6 +192,7 @@ python3 scraper.py -p 20 --save-both -q
 
 ### Command-Line Options
 
+**General Options:**
 ```
 -h, --help              Show help message and exit
 -c, --channel CHANNEL   Radio channel to scrape (default: swr4)
@@ -159,6 +206,17 @@ python3 scraper.py -p 20 --save-both -q
 -q, --quiet             Minimal output mode (no progress bars)
 --no-color              Disable colored output
 -i, --interactive       Interactive mode with guided prompts
+```
+
+**YouTube Download Options:**
+```
+--download              Enable YouTube downloads
+--format FORMAT         Download format: mp3, m4a, mp4 (default: mp3)
+--quality QUALITY       Audio quality: 128, 192, 320, best (default: 192)
+--download-dir DIR      Download directory (default: downloads/)
+--from-csv FILE         Download from existing CSV file instead of scraping
+--skip-existing         Don't re-download existing files
+--no-metadata           Skip ID3 metadata embedding (faster)
 ```
 
 ## Available Channels
@@ -258,6 +316,7 @@ Initializing session and getting cookies...
 
 ## Tips
 
+**Scraping:**
 - **Start with --list-channels**: Browse available channels before scraping
 - **Try different channels**: Each station has different music styles and playlists
 - **Start small**: Try `-p 2` or `-n 20` first to test a new channel
@@ -267,12 +326,29 @@ Initializing session and getting cookies...
 - **Song limit**: Use `-n` when you want a specific number of songs regardless of pages
 - **Auto-naming**: Let the tool name files by channel (omit `-o` flag)
 
+**Downloading:**
+- **Test first**: Download 2-3 songs first to verify everything works
+- **Use --unique-only**: Avoid downloading duplicates
+- **Quality vs Size**: 192 kbps is a good balance, 320 kbps for best quality
+- **Batch mode**: Scrape first, then download - allows you to review the list
+- **Format choice**: MP3 is most compatible, M4A has better quality at same bitrate
+- **Metadata**: ID3 tags make songs easier to organize in music players
+- **Network**: Downloads can be large (3-5 MB per song) - use Wi-Fi!
+
 ## Troubleshooting
 
 ### Channel Not Found
 If you get a 404 error:
 - Use `--list-channels` to verify the channel ID
 - Channel IDs are case-insensitive but use hyphens (e.g., `bayern-3`, not `bayern3`)
+
+### YouTube Downloads Failing
+If downloads fail:
+- **Video unavailable**: The video may have been removed or is geo-blocked
+- **Private video**: Some videos are private or require login
+- **Rate limiting**: YouTube may temporarily block requests - wait a few minutes
+- **FFmpeg required**: Make sure FFmpeg is installed for format conversion
+- **Network issues**: Check your internet connection
 
 ### Rate Limiting
 The scraper includes automatic 1-2 second delays between page requests to be respectful to the server.
@@ -297,13 +373,51 @@ SWR4-Scrape/
 ├── scraper.py              # Main scraper script
 ├── requirements.txt        # Python dependencies
 ├── README.md              # This file
-└── venv/                  # Virtual environment
+├── LICENSE.md             # GPL v3 License
+└── .gitignore             # Git ignore rules
 ```
+
+## Legal & Disclaimers
+
+### Terms of Use
+This tool is provided for educational and personal use only. Users are responsible for:
+- Complying with YouTube's Terms of Service
+- Respecting copyright laws and intellectual property rights
+- Following myonlineradio.de's terms and conditions
+- Using the tool responsibly and ethically
+
+### Important Notes
+- **Copyright**: Downloaded content may be copyrighted. Ensure you have the right to download and use the content.
+- **YouTube ToS**: Downloading from YouTube may violate their Terms of Service. Use at your own risk.
+- **Rate Limiting**: The scraper includes delays to be respectful to servers. Do not modify these to avoid server overload.
+- **No Warranty**: This software is provided "as is" without warranty of any kind.
+- **Personal Use**: This tool is intended for personal, non-commercial use only.
+
+### Created with AI Assistance
+This project was developed with assistance from AI (GitHub Copilot CLI). The code has been reviewed, tested, and validated to ensure functionality and quality.
 
 ## Credits
 
-Data source: [myonlineradio.de](https://myonlineradio.de/) - A comprehensive directory of German online radio stations with playlist tracking.
+**Data Source:** [myonlineradio.de](https://myonlineradio.de/) - A comprehensive directory of German online radio stations with playlist tracking.
+
+**Technologies:**
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) - YouTube download library
+- [Rich](https://github.com/Textualize/rich) - Beautiful terminal output
+- [BeautifulSoup](https://www.crummy.com/software/BeautifulSoup/) - HTML parsing
+- [Mutagen](https://github.com/quodlibet/mutagen) - Audio metadata handling
 
 ## License
 
-MIT License - Feel free to use and modify!
+This project is licensed under the GNU General Public License v3.0 (GPL-3.0).
+
+See [LICENSE.md](LICENSE.md) for details.
+
+**Key Points:**
+- ✅ Free to use, modify, and distribute
+- ✅ Source code must be made available
+- ✅ Modifications must also be GPL-3.0
+- ✅ No warranty provided
+
+---
+
+**⚠️ Use Responsibly**: Always respect copyright laws, terms of service, and intellectual property rights when using this tool.
