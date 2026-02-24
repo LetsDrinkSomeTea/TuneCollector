@@ -1,6 +1,6 @@
-# MyOnlineRadio Playlist Scraper & Downloader
+# TuneCollector - Radio Playlist Scraper & Downloader
 
-A feature-rich command-line tool to scrape playlist data from **100+ German radio channels** on myonlineradio.de and **download songs directly from YouTube** as MP3/MP4. Features a beautiful rich CLI interface with progress bars, colored output, ID3 metadata tagging, and flexible configuration options.
+**TuneCollector** is a feature-rich command-line tool to scrape playlist data from **100+ German radio channels** on myonlineradio.de and **download songs directly from YouTube** as MP3/MP4. Features a beautiful rich CLI interface with progress bars, colored output, ID3 metadata tagging, and flexible configuration options.
 
 ## Features
 
@@ -369,7 +369,7 @@ If you get zero songs:
 ## Project Structure
 
 ```
-SWR4-Scrape/
+TuneCollector/
 ├── scraper.py              # Main scraper script
 ├── requirements.txt        # Python dependencies
 ├── README.md              # This file

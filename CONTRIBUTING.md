@@ -29,8 +29,8 @@ Thank you for considering contributing to this project!
 
 ```bash
 # Clone your fork
-git clone https://github.com/your-username/SWR4-Scrape.git
-cd SWR4-Scrape
+git clone https://github.com/your-username/TuneCollector.git
+cd TuneCollector
 
 # Create virtual environment
 python3 -m venv venv
