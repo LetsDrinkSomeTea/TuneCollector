@@ -102,7 +102,7 @@ ALL_CHANNELS = [
 
 def scrape_playlist(
     session: requests.Session, channel: str = 'swr4', act_page: int = 1, 
-    last_id: str = "", progress: Optional[Progress] = None, task_id: Optional[int] = None
+    last_id: str = "", hash_val: str = "", progress: Optional[Progress] = None, task_id: Optional[int] = None
 ) -> List[Dict[str, str]]:
     """
     Scrape playlist data from myonlineradio.de
@@ -110,8 +110,9 @@ def scrape_playlist(
     Args:
         session: Requests session with cookies
         channel: Radio channel name (e.g., 'swr4', '1live', 'bayern-3')
-        act_page: Page number to scrape
+        act_page: Page number to scrape (always 1 for pagination via lastId)
         last_id: Last ID parameter for pagination
+        hash_val: Hash value extracted from the playlist page (required by the API)
         progress: Optional rich Progress instance
         task_id: Optional task ID for progress tracking
 
@@ -119,41 +120,46 @@ def scrape_playlist(
         List of dictionaries containing artist, song, youtube_id, timestamp, and data_id
     """
     url = f"https://myonlineradio.de/{channel}/playlist"
-    params = {
+    data = {
         "ajax": "1",
         "name": "",
         "from": "",
         "to": "",
-        "actPage": str(act_page),
+        "hash": hash_val,
+        "actPage": "1",
         "lastId": last_id,
     }
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
-        "Referer": "https://myonlineradio.de/swr4/playlist",
-        "DNT": "1",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Accept-Language": "de-DE,de;q=0.7",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "Referer": f"https://myonlineradio.de/{channel}/playlist",
+        "X-Requested-With": "XMLHttpRequest",
     }
 
     try:
         if progress and task_id is not None:
             progress.update(task_id, description=f"[cyan]Scraping page {act_page}...")
         
-        response = session.get(url, params=params, headers=headers, timeout=30)
+        response = session.post(url, data=data, headers=headers, timeout=30)
         response.raise_for_status()
 
-        soup = BeautifulSoup(response.text, "html.parser")
+        # Response is JSON with an 'html' key containing the playlist HTML
+        try:
+            html = response.json().get('html', '')
+        except Exception:
+            html = response.text
+        soup = BeautifulSoup(html, "html.parser")
 
         # Find all playlist items with data-youtube attribute
         playlist_items = soup.find_all(attrs={"data-youtube": True})
 
         results = []
         for item in playlist_items:
-            youtube_id = item.get("data-youtube")
-            data_id = item.get("data-id")
+            youtube_id = item.get("data-youtube", "").strip('"')
+            data_id = item.get("data-id", "").strip('"')
 
             # Extract artist
             artist_elem = item.find("span", itemprop="byArtist")
@@ -780,8 +786,9 @@ def main():
     all_data = []
     pages_scraped = 0
     
-    # Create session and get initial cookies
+    # Create session and get initial cookies + hash
     session = requests.Session()
+    hash_val = ""
     
     if not args.quiet:
         console.print(f"[cyan]Scraping {channel.upper()} playlist...[/cyan]")
@@ -791,11 +798,17 @@ def main():
         response = session.get(
             f"https://myonlineradio.de/{channel}/playlist",
             headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             },
             timeout=30,
         )
         if response.status_code == 200:
+            soup = BeautifulSoup(response.text, "html.parser")
+            hash_select = soup.find('select', {'name': 'hash'})
+            if hash_select:
+                first_option = hash_select.find('option')
+                if first_option:
+                    hash_val = first_option.get('value', '')
             if not args.quiet:
                 console.print("[green]✓ Session initialized[/green]")
         elif response.status_code == 404:
@@ -814,7 +827,7 @@ def main():
             if args.max_songs and len(all_data) >= args.max_songs:
                 break
             
-            page_data = scrape_playlist(session, channel=channel, act_page=page, last_id=last_id)
+            page_data = scrape_playlist(session, channel=channel, act_page=page, last_id=last_id, hash_val=hash_val)
             if not page_data:
                 break
             
@@ -844,7 +857,7 @@ def main():
                     progress.update(task, description=f"[yellow]✓ Reached max songs limit ({args.max_songs})")
                     break
                 
-                page_data = scrape_playlist(session, channel=channel, act_page=page, last_id=last_id, 
+                page_data = scrape_playlist(session, channel=channel, act_page=page, last_id=last_id, hash_val=hash_val,
                                            progress=progress, task_id=task)
                 if not page_data:
                     progress.update(task, description=f"[yellow]✓ No more data at page {page}")
